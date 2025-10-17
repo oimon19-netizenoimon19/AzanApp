@@ -1,0 +1,65 @@
+name: Flutter Android APK (Clean V2)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Full clean to remove v1 embedding traces
+        run: |
+          rm -rf android .android .gradle build
+          flutter clean || true
+          echo "🧹 Old embedding completely removed"
+
+      - name: Bootstrap Flutter project
+        run: |
+          flutter create . --platforms=android --org com.abdulwahhab --project-name azan_flutter
+          echo "✅ Fresh Android project (v2 embedding)."
+
+      - name: Apply native overrides
+        run: |
+          mkdir -p android/app/src/main/kotlin/com/abdulwahhab/azan
+          rsync -a native_overrides/kotlin/ android/app/src/main/kotlin/ || true
+          cp native_overrides/manifest/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
+
+      - name: Force v2 MainActivity
+        run: |
+          cat > android/app/src/main/kotlin/com/abdulwahhab/azan/MainActivity.kt <<'KOT'
+          package com.abdulwahhab.azan
+          import io.flutter.embedding.android.FlutterActivity
+          class MainActivity: FlutterActivity()
+KOT
+
+      - name: Patch Android manifests for v2 embedding
+        run: |
+          for M in android/app/src/main/AndroidManifest.xml \
+                   android/app/src/debug/AndroidManifest.xml \
+                   android/app/src/profile/AndroidManifest.xml; do
+            [ -f "$M" ] || continue
+            sed -i '0,/<application/{s/<application/<application android:name="${applicationName}"/}' "$M"
+            grep -q 'flutterEmbedding' "$M" || \
+              sed -i 's#<application[^>]*>#&\
+        <meta-data android:name="flutterEmbedding" android:value="2" />#' "$M"
+            sed -i 's/android:name="io.flutter.app.FlutterApplication"//' "$M"
+          done
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Build APK (debug)
+        run: flutter build apk --debug -v
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: azan-flutter-apk
+          path: build/app/outputs/flutter-apk/app-debug.apk
