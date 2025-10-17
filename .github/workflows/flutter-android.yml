@@ -14,75 +14,36 @@ jobs:
         with:
           channel: 'stable'
 
+      - name: Remove old Android project (clean cache)
+        run: |
+          rm -rf android
+          rm -rf .android
+          echo "Old Android project removed to prevent v1 embedding"
+
       - name: Bootstrap Flutter project
         run: |
           flutter create . --platforms=android --org com.abdulwahhab --project-name azan_flutter
-          echo "Your application code is in ./lib/main.dart."
+          echo "New Android project created cleanly (v2 embedding)."
 
       - name: Apply native overrides
         run: |
           mkdir -p android/app/src/main/kotlin/com/abdulwahhab/azan
-          rsync -a native_overrides/kotlin/ android/app/src/main/kotlin/ || true
+          rsync -a native_overrides/kotlin/ android/app/src/main/kotlin/
           cp native_overrides/manifest/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
+          echo "Applied overrides"
 
-      - name: Force v2 MainActivity (overwrite to avoid v1 references)
-        run: |
-          cat > android/app/src/main/kotlin/com/abdulwahhab/azan/MainActivity.kt <<'KOT'
-          package com.abdulwahhab.azan
-
-          import io.flutter.embedding.android.FlutterActivity
-          import io.flutter.embedding.engine.FlutterEngine
-          import io.flutter.plugin.common.MethodChannel
-          import com.abdulwahhab.azan.alarm.AlarmScheduler
-          import com.abdulwahhab.azan.alarm.Prayer
-          import com.abdulwahhab.azan.store.SettingsStore
-          import com.abdulwahhab.azan.audio.AthanPlaybackService
-
-          class MainActivity: FlutterActivity() {
-              private val CHANNEL = "com.abdulwahhab.azan/channel"
-              override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
-                  super.configureFlutterEngine(flutterEngine)
-                  MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
-                      .setMethodCallHandler { call, result ->
-                          when (call.method) {
-                              "scheduleWithTimes" -> {
-                                  val times = call.argument<Map<String, Long>>("times") ?: mapOf()
-                                  val files = call.argument<Map<String, String>>("files") ?: mapOf()
-                                  val ss = SettingsStore(this)
-                                  Prayer.values().forEach { p -> files[p.name]?.let { ss.setPath(p, it) } }
-                                  try { AlarmScheduler.scheduleWithEpochs(this, times); result.success(true) }
-                                  catch (e: Exception) { result.success(false) }
-                              }
-                              "playNow" -> {
-                                  val p = call.argument<String>("prayer") ?: ""
-                                  AthanPlaybackService.start(this, p)
-                                  result.success(true)
-                              }
-                              else -> result.notImplemented()
-                          }
-                      }
-              }
-          }
-KOT
-
-      - name: Patch Android manifests to v2 embedding
+      - name: Patch Android manifests for Flutter v2 embedding
         run: |
           for M in android/app/src/main/AndroidManifest.xml \
                    android/app/src/debug/AndroidManifest.xml \
                    android/app/src/profile/AndroidManifest.xml; do
             [ -f "$M" ] || continue
-            # ensure applicationName placeholder
-            grep -q 'android:name="${applicationName}"' "$M" || \
-              sed -i '0,/<application/{s/<application/<application android:name="${applicationName}"/}' "$M"
-            # add explicit v2 flag
+            sed -i '0,/<application/{s/<application/<application android:name="${applicationName}"/}' "$M"
             grep -q 'flutterEmbedding' "$M" || \
               sed -i 's#<application[^>]*>#&\
         <meta-data android:name="flutterEmbedding" android:value="2" />#' "$M"
-            # remove any legacy v1 hints
             sed -i 's/android:name="io.flutter.app.FlutterApplication"//' "$M"
           done
-          echo "==== Grep for legacy v1 refs (should be empty):"
-          grep -R --line-number 'io.flutter.app\|GeneratedPluginRegistrant' android || true
 
       - name: Flutter pub get
         run: flutter pub get
