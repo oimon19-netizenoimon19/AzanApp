@@ -1,4 +1,4 @@
-name: Flutter Android APK (Full Clean)
+name: Flutter Android APK (Clean V2)
 
 on:
   workflow_dispatch:
@@ -28,7 +28,7 @@ jobs:
       - name: Apply native overrides
         run: |
           mkdir -p android/app/src/main/kotlin/com/abdulwahhab/azan
-          rsync -a native_overrides/kotlin/ android/app/src/main/kotlin/
+          rsync -a native_overrides/kotlin/ android/app/src/main/kotlin/ || true
           cp native_overrides/manifest/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
 
       - name: Force v2 MainActivity
