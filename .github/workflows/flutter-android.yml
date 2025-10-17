@@ -22,34 +22,73 @@ jobs:
       - name: Apply native overrides
         run: |
           mkdir -p android/app/src/main/kotlin/com/abdulwahhab/azan
-          rsync -a native_overrides/kotlin/ android/app/src/main/kotlin/
+          rsync -a native_overrides/kotlin/ android/app/src/main/kotlin/ || true
           cp native_overrides/manifest/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
-          echo "Applied overrides"
 
-      - name: Patch Android manifests for Flutter v2 embedding
+      - name: Force v2 MainActivity (overwrite to avoid v1 references)
+        run: |
+          cat > android/app/src/main/kotlin/com/abdulwahhab/azan/MainActivity.kt <<'KOT'
+          package com.abdulwahhab.azan
+
+          import io.flutter.embedding.android.FlutterActivity
+          import io.flutter.embedding.engine.FlutterEngine
+          import io.flutter.plugin.common.MethodChannel
+          import com.abdulwahhab.azan.alarm.AlarmScheduler
+          import com.abdulwahhab.azan.alarm.Prayer
+          import com.abdulwahhab.azan.store.SettingsStore
+          import com.abdulwahhab.azan.audio.AthanPlaybackService
+
+          class MainActivity: FlutterActivity() {
+              private val CHANNEL = "com.abdulwahhab.azan/channel"
+              override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+                  super.configureFlutterEngine(flutterEngine)
+                  MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
+                      .setMethodCallHandler { call, result ->
+                          when (call.method) {
+                              "scheduleWithTimes" -> {
+                                  val times = call.argument<Map<String, Long>>("times") ?: mapOf()
+                                  val files = call.argument<Map<String, String>>("files") ?: mapOf()
+                                  val ss = SettingsStore(this)
+                                  Prayer.values().forEach { p -> files[p.name]?.let { ss.setPath(p, it) } }
+                                  try { AlarmScheduler.scheduleWithEpochs(this, times); result.success(true) }
+                                  catch (e: Exception) { result.success(false) }
+                              }
+                              "playNow" -> {
+                                  val p = call.argument<String>("prayer") ?: ""
+                                  AthanPlaybackService.start(this, p)
+                                  result.success(true)
+                              }
+                              else -> result.notImplemented()
+                          }
+                      }
+              }
+          }
+KOT
+
+      - name: Patch Android manifests to v2 embedding
         run: |
           for M in android/app/src/main/AndroidManifest.xml \
                    android/app/src/debug/AndroidManifest.xml \
                    android/app/src/profile/AndroidManifest.xml; do
             [ -f "$M" ] || continue
-            echo "Patching $M ..."
             # ensure applicationName placeholder
-            if ! grep -q 'android:name="${applicationName}"' "$M"; then
+            grep -q 'android:name="${applicationName}"' "$M" || \
               sed -i '0,/<application/{s/<application/<application android:name="${applicationName}"/}' "$M"
-            fi
-            # add v2 embedding flag if missing
+            # add explicit v2 flag
             grep -q 'flutterEmbedding' "$M" || \
               sed -i 's#<application[^>]*>#&\
         <meta-data android:name="flutterEmbedding" android:value="2" />#' "$M"
-            # remove any legacy v1 reference
+            # remove any legacy v1 hints
             sed -i 's/android:name="io.flutter.app.FlutterApplication"//' "$M"
           done
+          echo "==== Grep for legacy v1 refs (should be empty):"
+          grep -R --line-number 'io.flutter.app\|GeneratedPluginRegistrant' android || true
 
       - name: Flutter pub get
         run: flutter pub get
 
       - name: Build APK (debug)
-        run: flutter build apk --debug
+        run: flutter build apk --debug -v
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
