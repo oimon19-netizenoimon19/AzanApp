@@ -1,4 +1,4 @@
-name: Flutter Android APK
+name: Flutter Android APK (Full Clean)
 
 on:
   workflow_dispatch:
@@ -14,25 +14,32 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Remove old Android project (clean cache)
+      - name: Full clean to remove v1 embedding traces
         run: |
-          rm -rf android
-          rm -rf .android
-          echo "Old Android project removed to prevent v1 embedding"
+          rm -rf android .android .gradle build
+          flutter clean || true
+          echo "🧹 Old embedding completely removed"
 
       - name: Bootstrap Flutter project
         run: |
           flutter create . --platforms=android --org com.abdulwahhab --project-name azan_flutter
-          echo "New Android project created cleanly (v2 embedding)."
+          echo "✅ Fresh Android project (v2 embedding)."
 
       - name: Apply native overrides
         run: |
           mkdir -p android/app/src/main/kotlin/com/abdulwahhab/azan
           rsync -a native_overrides/kotlin/ android/app/src/main/kotlin/
           cp native_overrides/manifest/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
-          echo "Applied overrides"
 
-      - name: Patch Android manifests for Flutter v2 embedding
+      - name: Force v2 MainActivity
+        run: |
+          cat > android/app/src/main/kotlin/com/abdulwahhab/azan/MainActivity.kt <<'KOT'
+          package com.abdulwahhab.azan
+          import io.flutter.embedding.android.FlutterActivity
+          class MainActivity: FlutterActivity()
+KOT
+
+      - name: Patch Android manifests for v2 embedding
         run: |
           for M in android/app/src/main/AndroidManifest.xml \
                    android/app/src/debug/AndroidManifest.xml \
